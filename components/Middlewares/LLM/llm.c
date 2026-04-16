@@ -58,11 +58,12 @@ esp_err_t llm_init(void)
             return err;
         }
     }
+    ESP_LOGI(TAG, "LLM init done");
     s_llm_initialized = true;
     return ESP_OK;
 }
 
-static esp_err_t llm_bulid_request_body(const char *text_in, char **out_body)
+static esp_err_t llm_build_request_body(const char *text_in, char **out_body)
 {
     cJSON *root;
     cJSON *message_arr;
@@ -219,7 +220,7 @@ esp_err_t llm_chat(const char *text_in, char **text_out)
         .buffer_size = 4096,
     };
 
-    err = llm_bulid_request_body(text_in, &request_body);
+    err = llm_build_request_body(text_in, &request_body);
     if(err != ESP_OK)
     {
         return err;
@@ -231,12 +232,12 @@ esp_err_t llm_chat(const char *text_in, char **text_out)
         err =  ESP_FAIL;
         goto cleanup;
     }
-    char Authorization_value[256];
-    snprintf(Authorization_value, sizeof(Authorization_value), "Bearer %s", LLM_API_KEY);
+    char authorization_value[256];
+    snprintf(authorization_value, sizeof(authorization_value), "Bearer %s", LLM_API_KEY);
 
     esp_http_client_set_header(http_client, "Content-Type", "application/json");
     esp_http_client_set_header(http_client, "Accept", "application/json");
-    esp_http_client_set_header(http_client, "Authorization",  Authorization_value);
+    esp_http_client_set_header(http_client, "Authorization",  authorization_value);
 
     err = esp_http_client_open(http_client, strlen(request_body));
     if(err != ESP_OK)

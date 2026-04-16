@@ -131,6 +131,7 @@ esp_err_t i2s_spk_init(void)
 {
     esp_err_t err;
     i2s_chan_config_t i2s_chan_config = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+    i2s_chan_config.auto_clear = true;
     err = i2s_new_channel(&i2s_chan_config, &s_i2s_spk_chan, NULL);
     if(err != ESP_OK)
     {
@@ -164,7 +165,7 @@ esp_err_t i2s_spk_init(void)
             },
         },
     };
-    // 拉高SD，增益输出
+    // 拉高SD，可以增益输出
     gpio_config_t io_config = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_OUTPUT,

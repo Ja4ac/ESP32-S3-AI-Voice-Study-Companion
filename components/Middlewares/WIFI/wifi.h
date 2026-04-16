@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "project_secrets.h"
 #include "esp_err.h"
+#include "esp_netif.h"
 
 #include <stdbool.h>
 

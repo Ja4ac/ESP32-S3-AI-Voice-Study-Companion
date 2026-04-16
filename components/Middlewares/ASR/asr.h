@@ -16,6 +16,6 @@
 #define ASR_MAX_DATA_SIZE      (ASR_SAMPLE_RATE * ASR_RECORD_SECONDS * sizeof(int16_t))         // 最大音频数据大小（字节）
 
 esp_err_t asr_init(void);
-char *asr_recognize(void);
+char *asr_recognize(int16_t *audio, size_t audio_bytes);
 
 #endif

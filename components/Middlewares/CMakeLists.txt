@@ -2,14 +2,16 @@ set(src_dirs
         TTS
         ASR
         WIFI
-        LLM)
+        LLM
+        SR)
 
 set(include_dirs
         .
         TTS
         ASR
         WIFI
-        LLM)
+        LLM
+        SR)
 
 set(requires
         driver
@@ -21,7 +23,8 @@ set(requires
         BSP
         nvs_flash
         mbedtls
-        esp_timer)
+        esp_timer
+        espressif__esp-sr)
 
 idf_component_register(SRC_DIRS "${src_dirs}"
                        INCLUDE_DIRS "${include_dirs}"

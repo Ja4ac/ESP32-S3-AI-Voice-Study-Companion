@@ -150,7 +150,7 @@ esp_err_t wifi_sta_init(void)
         return err;
     }
     err = esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
-    if(err != ESP_OK)
+    if(err != ESP_OK) 
     {
         return err;
     }

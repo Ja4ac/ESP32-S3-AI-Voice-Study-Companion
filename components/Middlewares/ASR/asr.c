@@ -49,14 +49,15 @@ static esp_err_t asr_http_read(esp_http_client_handle_t http_client, char **buff
 // token 获取流程：发请求 -> 读响应 -> 解析 JSON -> 保存 access_token
 static bool asr_get_baidu_access_token(void)
 {
+    bool ok = true;
     esp_err_t err;
     esp_http_client_handle_t http_client = NULL;
     char *new_token = NULL;             // 存放取得的新的access_token
     char url[512];                      // 拼接url
     int headers;                 // http服务器返回的响应头长度
     int status_code;                    // http服务器返回的状态码
-    char *buffer;                       // http服务器返回的数据
-    cJSON *root;                        // 将http服务器返回的数据解析为JSON
+    char *buffer = NULL;                       // http服务器返回的数据
+    cJSON *root = NULL;                        // 将http服务器返回的数据解析为JSON
     cJSON *token;                       // 存放新s_access_token
     cJSON *error;                       // 存放错误
     cJSON *error_desc;                  // 存放错误信息
@@ -76,7 +77,7 @@ static bool asr_get_baidu_access_token(void)
     esp_http_client_config_t http_client_config = {
         .url = url,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = 20000,
+        .timeout_ms = 40000,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 4096,
     };
@@ -84,7 +85,8 @@ static bool asr_get_baidu_access_token(void)
     http_client = esp_http_client_init(&http_client_config);
     if(http_client == NULL)
     {
-        return false;
+        ok = false;
+        goto cleanup;
     }
     esp_http_client_set_header(http_client,
                                "Accept",
@@ -94,8 +96,8 @@ static bool asr_get_baidu_access_token(void)
     if(err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(http_client);
-        return false;
+        ok = false;
+        goto cleanup;
     }
 
     headers = esp_http_client_fetch_headers(http_client);
@@ -104,21 +106,23 @@ static bool asr_get_baidu_access_token(void)
     if(headers < 0)
     {
         ESP_LOGE(TAG, "Failed to get content length");
-        esp_http_client_cleanup(http_client);
-        return false;
+        ok = false;
+        goto cleanup;
     }
     if(status_code != 200)
     {
         ESP_LOGE(TAG, "Token request failed with status: %d", status_code);
-        esp_http_client_cleanup(http_client);
-        return false;
+        ok = false;
+        goto cleanup;
     }
 
     err = asr_http_read(http_client, &buffer, headers);
     esp_http_client_cleanup(http_client);
+    http_client = NULL;
     if(err != ESP_OK)
     {
-        return false;
+        ok = false;
+        goto cleanup;
     }
 
     root = cJSON_Parse(buffer);
@@ -138,23 +142,38 @@ static bool asr_get_baidu_access_token(void)
             ESP_LOGE(TAG, "API error: %s - %s",
                      error ? error -> valuestring : "unknown",
                      error_desc ? error_desc -> valuestring : "");
-            cJSON_Delete(root);
-            return false;
+            ok = false;
+            goto cleanup;
         }
-        cJSON_Delete(root);
     }
     else
     {
         ESP_LOGE(TAG, "Failed to parse JSON response");
-        return false;
+        ok = false;
+        goto cleanup;
     }
     if(s_access_token != NULL)
     {
         free(s_access_token);
     }
     s_access_token = new_token;
-    free(buffer);
-    return true;
+    ok = true;
+    goto cleanup;
+
+    cleanup:
+    if (root != NULL) 
+    {
+        cJSON_Delete(root);
+    }
+    if (buffer != NULL) 
+    {
+        free(buffer);
+    }
+    if (http_client != NULL) 
+    {
+        esp_http_client_cleanup(http_client);
+    }
+    return ok;
 }
 
 // 初始化ASR模块：连接wifi并获取百度语音识别access_token。
@@ -181,7 +200,7 @@ esp_err_t asr_init(void)
 }
 
 // 从MIC中读取固定时长音频存入audio_data
-esp_err_t asr_record_audio(int16_t *audio_data,int *audio_bytes)
+static esp_err_t asr_record_audio(int16_t *audio_data,int *audio_bytes)
 {
     size_t total_samples = 0;
     int64_t start_time = esp_timer_get_time();
@@ -204,14 +223,17 @@ esp_err_t asr_record_audio(int16_t *audio_data,int *audio_bytes)
     return (*audio_bytes > 0) ? ESP_OK : ESP_FAIL;
 }
 
-// 录制4秒音频并通过百度语音识别API转为文本。
+// 调用sr_event中的audio并通过百度语音识别API转为文本。
 // 识别成功返回由malloc分配的字符串指针，调用者需 free()；
-char *asr_recognize(void)
+char *asr_recognize(int16_t *audio, size_t audio_bytes)
 {
+    if(audio == NULL || audio_bytes == 0)
+    {
+        return NULL;
+    }
     esp_err_t err;
     esp_http_client_handle_t http_client = NULL;
-    int16_t *audio_data = NULL;            // 从MIC读取的音频数据
-    int audio_bytes;                // 音频数据长度
+
     char url[512];                  // 拼接url
     int written;                    // 向http服务器一次写入的字节
     int total_written;              // 向http服务器总共写入的字节
@@ -219,8 +241,8 @@ char *asr_recognize(void)
     int status_code;                // http服务器发送的状态码
     char *result = NULL;            // 语音识别结果
     int result_arr_size;            // 存储识别结果的数组大小
-    char *response = NULL;                 // http发送的数据
-    cJSON *root = NULL;                    // 将http发送的数据解析为JSON
+    char *response = NULL;          // http发送的数据
+    cJSON *root = NULL;             // 将http发送的数据解析为JSON
     cJSON *err_no;                  // 是否有错误
     cJSON *err_msg;                 // 错误信息
     cJSON *result_arr;              // 存储识别结果的数组
@@ -235,20 +257,6 @@ char *asr_recognize(void)
     {
         ESP_LOGE(TAG, "No access token available");
         return NULL;
-    }
-
-    // 整段 PCM 先录到本地缓冲区，再一次性上传
-    audio_data = malloc(ASR_MAX_DATA_SIZE);
-    if(audio_data == NULL)
-    {
-        ESP_LOGE(TAG, "Failed to allocate audio data buffer");
-        goto cleanup;
-    }
-    
-    err = asr_record_audio(audio_data, &audio_bytes);
-    if(err != ESP_OK)
-    {
-        goto cleanup;
     }
 
     // 百度接口要求把 token 和音频长度一起带进 URL
@@ -284,7 +292,7 @@ char *asr_recognize(void)
     while(total_written < audio_bytes)
     {
         // HTTP body 可能一次写不完，所以这里按偏移循环写完
-        written = esp_http_client_write(http_client, (char *)audio_data + total_written, audio_bytes - total_written);
+        written = esp_http_client_write(http_client, (char *)audio + total_written, audio_bytes - total_written);
         if(written == -1)
         {
             ESP_LOGE(TAG, "Failed to write audio data");
@@ -293,7 +301,6 @@ char *asr_recognize(void)
         }
         total_written += written;
     }
-    free(audio_data);
     ESP_LOGI(TAG, "Wrote %d bytes of audio data", total_written);
 
     content_length = esp_http_client_fetch_headers(http_client);
@@ -324,18 +331,22 @@ char *asr_recognize(void)
     }
     err_no = cJSON_GetObjectItem(root, "err_no");
     err_msg = cJSON_GetObjectItem(root, "err_msg");
-    if(err_no == NULL || err_no -> valueint != 0)
+    int err_no_value = -1;
+
+    if (err_no != NULL && cJSON_IsNumber(err_no)) 
     {
-        // 这里是业务错误，不是 HTTP/TLS 错误；token 过期通常也会走到这里
-        ESP_LOGE(TAG, "Failed to get err_no, err_no: %d, err_msg: %s", 
-                                             err_no ? err_no ->valueint : -1,
-                                             err_msg ? err_msg -> valuestring : "unknown");
-        if(err_no -> valueint == 110 || err_no ->valueint == 111)
+        err_no_value = err_no->valueint;
+    }
+    if (err_no_value != 0)
+    {
+        ESP_LOGE(TAG, "Failed to get err_no, err_no: %d, err_msg: %s",
+                err_no_value,
+                err_msg ? err_msg->valuestring : "unknown");
+        if (err_no_value == 110 || err_no_value == 111)
         {
             ESP_LOGW(TAG, "Access token expired, retrieve it again");
             asr_get_baidu_access_token();
         }
-        
         goto cleanup;
     }
     result_arr = cJSON_GetObjectItem(root, "result");
@@ -371,11 +382,6 @@ char *asr_recognize(void)
     return result;
 
     cleanup:
-        if(audio_data != NULL)
-        {
-            free(audio_data);
-            audio_data = NULL;
-        }
         if(root != NULL)
         {
             cJSON_Delete(root);
